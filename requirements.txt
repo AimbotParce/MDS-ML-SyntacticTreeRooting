@@ -9,3 +9,4 @@ torch
 git+https://github.com/pyg-team/pytorch_geometric.git
 torch-scatter   
 torch-sparse
+seaborn

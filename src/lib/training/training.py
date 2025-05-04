@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import Callable, List, Optional
+from typing import Callable, List, Literal, Optional
 
 import torch
 from torch.nn import Module
@@ -19,6 +19,7 @@ class TrainingLoop:
         callbacks: Optional[List["Callback"]] = [],
         val_loader: Optional[DataLoader] = None,
         device: Optional[torch.device] = None,
+        verbose: Literal[0, 1, 2] = 1,
     ):
         """
         Args:
@@ -39,27 +40,8 @@ class TrainingLoop:
         self.epoch = 0
         self.val_loss = 0
         self.loss = 0
+        self.verbose = verbose
         self._stop_training = False
-
-    def on_epoch_end(self):
-        for callback in self.callbacks:
-            callback.on_epoch_end()
-
-    def on_epoch_start(self):
-        for callback in self.callbacks:
-            callback.on_epoch_start()
-
-    def on_batch_end(self):
-        for callback in self.callbacks:
-            callback.on_batch_end()
-
-    def on_batch_start(self):
-        for callback in self.callbacks:
-            callback.on_batch_start()
-
-    def on_train_end(self):
-        for callback in self.callbacks:
-            callback.on_train_end()
 
     def on_train_start(self):
         self.epoch = 0
@@ -71,24 +53,63 @@ class TrainingLoop:
             callback.training_loop = self
             callback.on_train_start()
 
+    def on_train_end(self):
+        for callback in self.callbacks:
+            callback.on_train_end()
+
+    def on_epoch_start(self):
+        self.metrics = {}
+        self.avg_loss = 0
+        for callback in self.callbacks:
+            callback.on_epoch_start()
+
+    def on_epoch_end(self):
+        self.avg_loss /= len(self.train_loader)
+        self.metrics["loss"] = self.avg_loss
+        for callback in self.callbacks:
+            callback.on_epoch_end()
+        if self.verbose in [1, 2]:
+            print(f"Epoch {self.epoch}/{self.epochs}: {self.formatted_metrics()}")
+
+    def on_batch_start(self):
+        for callback in self.callbacks:
+            callback.on_batch_start()
+
+    def on_batch_end(self):
+        self.metrics["loss"] = self.loss
+        self.avg_loss += self.loss
+        for callback in self.callbacks:
+            callback.on_batch_end()
+
     def on_validation_start(self):
         for callback in self.callbacks:
             callback.on_validation_start()
 
     def on_validation_end(self):
+        self.metrics["val_loss"] = self.val_loss
         for callback in self.callbacks:
             callback.on_validation_end()
-
-    def on_validation_batch_end(self):
-        for callback in self.callbacks:
-            callback.on_validation_batch_end()
 
     def on_validation_batch_start(self):
         for callback in self.callbacks:
             callback.on_validation_batch_start()
 
+    def on_validation_batch_end(self):
+        for callback in self.callbacks:
+            callback.on_validation_batch_end()
+
     def stop_training(self):
         self._stop_training = True
+
+    def formatted_metrics(self) -> str:
+        """
+        Format the metrics for display.
+        Args:
+            metrics (dict): The metrics to format.
+        Returns:
+            str: The formatted metrics.
+        """
+        return " ".join([f"{k}={v:.5f}" for k, v in self.metrics.items()])
 
     def train(self, verbose: int = 1):
         self.model.train()
@@ -102,6 +123,7 @@ class TrainingLoop:
                 ncols=100,
                 unit="batch",
                 position=0,
+                colour="green",
                 disable=verbose != 1,
             ) as bar:
                 for batch in self.train_loader:
@@ -112,9 +134,9 @@ class TrainingLoop:
                     loss.backward()
                     self.optimizer.step()
                     self.optimizer.zero_grad()
-                    bar.set_postfix_str(f"loss={loss.item():.5f}")
-                    bar.update(1)
                     self.on_batch_end()
+                    bar.set_postfix_str(self.formatted_metrics())
+                    bar.update(1)
 
                 val_loss = 0
                 self.on_validation_start()
@@ -126,8 +148,7 @@ class TrainingLoop:
                         self.on_validation_batch_end()
                 self.val_loss = val_loss / len(self.val_loader)
                 self.on_validation_end()
-                if verbose in [1, 2]:
-                    print(f"Epoch {self.epoch}/{self.epochs}: loss={loss:.5f} val_loss={self.val_loss:.5f}")
+                bar.close()
                 self.on_epoch_end()
                 if self._stop_training:
                     break
