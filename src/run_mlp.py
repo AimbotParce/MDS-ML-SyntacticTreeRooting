@@ -1,5 +1,8 @@
+import gc
 import itertools as it
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Dict, Generic, Iterator, List, TypeVar
 
@@ -100,6 +103,13 @@ class GridSearch:
 if __name__ == "__main__":
     import argparse
 
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="(%(asctime)s) %(levelname)s # %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser(description="Run MLP model training with grid search.")
     parser.add_argument("--skip-configurations", type=int, default=None, help="Number of configurations to skip.")
     parser.add_argument(
@@ -129,7 +139,7 @@ if __name__ == "__main__":
     grid.add_dimension("beta_2", Dimension(0.999, 0.995, 0.99))
     grid.add_dimension("epsilon", Dimension(1e-08, 1e-07, 1e-06))
 
-    print(f"Total configurations: {len(grid)}")
+    logger.info(f"Total configurations: {len(grid)}")
 
     cross_validation_folds = 5
 
@@ -148,9 +158,9 @@ if __name__ == "__main__":
     # we would separate based on sentence id, but we don't have that in the data now
     for j, configuration in enumerate(grid):
         if skip_configurations is not None and j <= skip_configurations:
-            print(f"Skipping configuration {j + 1}/{len(grid)}")
+            logger.info(f"Skipping configuration {j + 1}/{len(grid)}")
             continue
-        print(f"Configuration {j + 1}/{len(grid)}: {configuration}")
+        logger.info(f"Configuration {j + 1}/{len(grid)}: {configuration}")
         config_path = models_path / f"configuration-{j}"
         config_path.mkdir(parents=True, exist_ok=True)
         with open(config_path / "configuration.json", "w") as f:
@@ -158,9 +168,11 @@ if __name__ == "__main__":
 
         losses = []
         accuracies = []
+        conf_start = time.time()
 
         # Separate cross-validation data
         for i in range(cross_validation_folds):
+            gc.collect()  # Clear memory before each fold
             fold_path = config_path / f"fold-{i}"
             fold_path.mkdir(parents=True, exist_ok=True)
 
@@ -208,10 +220,15 @@ if __name__ == "__main__":
                 json.dump({"loss": loss, "accuracy": accuracy}, f, indent=4)
             with open(config_path / "metrics.json", "w") as f:  # Store this every fold, so we "checkpoint".
                 json.dump({"losses": losses, "accuracies": accuracies}, f, indent=4)
-            print(f"Fold {i + 1}/{cross_validation_folds} - Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
-        print(
+            logger.info(f"Fold {i + 1}/{cross_validation_folds} - Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
+        logger.info(
             f"Configuration {j + 1}/{len(grid)} - Average Loss: {sum(losses) / len(losses):.4f}, "
             f"Average Accuracy: {sum(accuracies) / len(accuracies):.4f}"
+        )
+        logger.info(f"Configuration {j + 1}/{len(grid)} completed in {time.time() - conf_start:.2f} seconds.")
+        missing_confs = len(grid) - (j + 1)
+        logger.info(
+            f"Missing configurations: {missing_confs}. ETA: {(time.time() - conf_start) * missing_confs:.2f} seconds."
         )
         with open(config_path / "metrics.json", "w") as f:
             json.dump(
@@ -224,4 +241,4 @@ if __name__ == "__main__":
                 f,
                 indent=4,
             )
-        print(f"Configuration {j + 1}/{len(grid)} completed and saved.")
+        logger.info(f"Configuration {j + 1}/{len(grid)} completed and saved.")
