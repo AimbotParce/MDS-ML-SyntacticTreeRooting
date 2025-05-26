@@ -249,6 +249,6 @@ if __name__ == "__main__":
 
         logger.info(f"Configuration {j + 1}/{len(grid)} completed in {time.time() - conf_start:.2f} seconds.")
         missing_confs = len(grid) - (j + 1)
-        duration_points += 1
+        duration_points = min(duration_points + 1, 10)  # At most 10 points to average over, otherwise too smooth.
         average_duration = (average_duration * (duration_points - 1) + (time.time() - conf_start)) / duration_points
         logger.info(f"Missing configurations: {missing_confs}. ETA: {average_duration * missing_confs:.2f} seconds.")
