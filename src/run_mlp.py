@@ -4,10 +4,11 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Generic, Iterator, List, TypeVar
+from typing import Any, Dict, Generic, Iterator, List, TypeVar
 
 import numpy as np
 import pandas as pd
+from keras import backend as K
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers import Dense, Dropout, Input
 from keras.models import Model
@@ -95,7 +96,7 @@ class GridSearch:
     def __len__(self):
         return np.prod(list(map(lambda x: len(x), self._dimensions.values())))
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
         for prod in it.product(*map(lambda x: x.options, self._dimensions.values())):
             yield {key: value for key, value in zip(self._dimensions.keys(), prod)}
 
@@ -125,6 +126,9 @@ if __name__ == "__main__":
     train_data["language"] = train_data["language"].astype("category")
     validation_data["language"] = validation_data["language"].astype("category")
     train_data.head()
+
+    avg_duration = 0
+    duration_points = 0
 
     grid = GridSearch()
     grid.add_dimension("hidden_layer_sizes", Dimension([64, 64, 32], [64, 32], [64, 32, 16, 8]))
@@ -221,15 +225,20 @@ if __name__ == "__main__":
             with open(config_path / "metrics.json", "w") as f:  # Store this every fold, so we "checkpoint".
                 json.dump({"losses": losses, "accuracies": accuracies}, f, indent=4)
             logger.info(f"Fold {i + 1}/{cross_validation_folds} - Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
+
+            K.clear_session()  # Clear the Keras session to free memory
+            del model
+            gc.collect()
+
         logger.info(
             f"Configuration {j + 1}/{len(grid)} - Average Loss: {sum(losses) / len(losses):.4f}, "
             f"Average Accuracy: {sum(accuracies) / len(accuracies):.4f}"
         )
         logger.info(f"Configuration {j + 1}/{len(grid)} completed in {time.time() - conf_start:.2f} seconds.")
         missing_confs = len(grid) - (j + 1)
-        logger.info(
-            f"Missing configurations: {missing_confs}. ETA: {(time.time() - conf_start) * missing_confs:.2f} seconds."
-        )
+        duration_points += 1
+        average_duration = (average_duration * (duration_points - 1) + (time.time() - conf_start)) / duration_points
+        logger.info(f"Missing configurations: {missing_confs}. ETA: {average_duration * missing_confs:.2f} seconds.")
         with open(config_path / "metrics.json", "w") as f:
             json.dump(
                 {
