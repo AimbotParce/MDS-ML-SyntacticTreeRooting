@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Generic, Iterator, List, TypeVar
+from typing import Any, Dict, Generic, Iterator, List, Optional, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -101,6 +101,8 @@ class GridSearch:
             yield {key: value for key, value in zip(self._dimensions.keys(), prod)}
 
 
+DATA_PATH = Path(__file__).parent.parent / "data"
+
 if __name__ == "__main__":
     import argparse
 
@@ -112,22 +114,18 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Run MLP model training with grid search.")
-    parser.add_argument("--skip-configurations", type=int, default=None, help="Number of configurations to skip.")
-    parser.add_argument(
-        "--no-run-increment", action="store_true", help="Do not increment the run ID, use 'run-1' only."
-    )
+    parser.add_argument("--continue-run", type=int, help="Continue a specific run.", default=None, dest="continue_run")
     args = parser.parse_args()
-    skip_configurations: int = args.skip_configurations
-    no_run_increment: bool = args.no_run_increment
+    continue_run: Optional[int] = args.continue_run
 
     # Load the data
-    train_data = pd.read_csv("../data/cache/training_unwound.csv")
-    validation_data = pd.read_csv("../data/cache/validation_unwound.csv")
+    train_data = pd.read_csv(DATA_PATH / "cache/training_unwound.csv")
+    validation_data = pd.read_csv(DATA_PATH / "cache/validation_unwound.csv")
     train_data["language"] = train_data["language"].astype("category")
     validation_data["language"] = validation_data["language"].astype("category")
     train_data.head()
 
-    avg_duration = 0
+    average_duration = 0
     duration_points = 0
 
     grid = GridSearch()
@@ -147,25 +145,27 @@ if __name__ == "__main__":
 
     cross_validation_folds = 5
 
-    models_path_root = Path("../data/models/mlp")
+    models_path_root = DATA_PATH / "models/mlp"
 
-    models_path = models_path_root / "run-1"
-    if not no_run_increment:
+    if continue_run is not None:
+        models_path = models_path_root / f"run-{continue_run}"
+    else:
         run_id = 1
+        models_path = models_path_root / f"run-{run_id}"
         while models_path.exists():
             run_id += 1
             models_path = models_path_root / f"run-{run_id}"
-    models_path.mkdir(parents=True, exist_ok=True)
+        models_path.mkdir(parents=True, exist_ok=True)
 
     row_indices = train_data["row_index"].unique()
     # We'll separate based on row indices, because that's what we have now. Ideally
     # we would separate based on sentence id, but we don't have that in the data now
     for j, configuration in enumerate(grid):
-        if skip_configurations is not None and j <= skip_configurations:
-            logger.info(f"Skipping configuration {j + 1}/{len(grid)}")
-            continue
         logger.info(f"Configuration {j + 1}/{len(grid)}: {configuration}")
         config_path = models_path / f"configuration-{j}"
+        if continue_run is not None and config_path.exists():
+            logger.info(f"Skipping configuration {j + 1}/{len(grid)}")
+            continue
         config_path.mkdir(parents=True, exist_ok=True)
         with open(config_path / "configuration.json", "w") as f:
             json.dump(configuration, f, indent=4)
@@ -234,11 +234,7 @@ if __name__ == "__main__":
             f"Configuration {j + 1}/{len(grid)} - Average Loss: {sum(losses) / len(losses):.4f}, "
             f"Average Accuracy: {sum(accuracies) / len(accuracies):.4f}"
         )
-        logger.info(f"Configuration {j + 1}/{len(grid)} completed in {time.time() - conf_start:.2f} seconds.")
-        missing_confs = len(grid) - (j + 1)
-        duration_points += 1
-        average_duration = (average_duration * (duration_points - 1) + (time.time() - conf_start)) / duration_points
-        logger.info(f"Missing configurations: {missing_confs}. ETA: {average_duration * missing_confs:.2f} seconds.")
+
         with open(config_path / "metrics.json", "w") as f:
             json.dump(
                 {
@@ -250,4 +246,9 @@ if __name__ == "__main__":
                 f,
                 indent=4,
             )
-        logger.info(f"Configuration {j + 1}/{len(grid)} completed and saved.")
+
+        logger.info(f"Configuration {j + 1}/{len(grid)} completed in {time.time() - conf_start:.2f} seconds.")
+        missing_confs = len(grid) - (j + 1)
+        duration_points += 1
+        average_duration = (average_duration * (duration_points - 1) + (time.time() - conf_start)) / duration_points
+        logger.info(f"Missing configurations: {missing_confs}. ETA: {average_duration * missing_confs:.2f} seconds.")
