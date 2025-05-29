@@ -67,6 +67,9 @@ def run_config_fold(
     from keras.models import Model
     from keras.optimizers import Adam
     from keras.regularizers import l1_l2
+    from keras.utils import set_random_seed
+
+    set_random_seed(42)
 
     def create_model(
         input_shape,
